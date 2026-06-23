@@ -1,1 +1,1 @@
-Evaluation of Recurrent Stroke Risk and Anticoagulation Treatment Response among Phenotypically Similar Patients with ESUS: Evidence from the CASPR Registry<img width="468" height="51" alt="image" src="https://github.com/user-attachments/assets/bff528c5-aad7-4aab-8e86-9bf76f20bc61" />
+Evaluation of Recurrent Stroke Risk and Anticoagulation Treatment Response among Phenotypically Similar Patients with ESUS: Evidence from the CASPR Registry
