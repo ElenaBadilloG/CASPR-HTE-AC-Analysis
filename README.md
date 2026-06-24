@@ -47,3 +47,87 @@ install.packages(c(
   "cluster", "survminer", "ggthemes", "Rtsne", "fastshap",
   "patchwork", "flextable"
 ))
+```
+
+---
+
+## Data
+
+> **The CASPR registry data are not included in this repository** and are not publicly
+> available due to patient-privacy restrictions. Access requires appropriate
+> data-use agreements with the registry custodians.
+
+The script expects two Stata (`.dta`) files:
+
+| File | Used for |
+|------|----------|
+| `data.dta` | Main analysis dataset (loaded at the top of the script). |
+| `data/CASPR_lvef_092424_FINAL.dta` | Reference dataset used at the end to back-transform (un-scale) covariates for descriptive tables. |
+
+Expected key columns include: an `include` cohort flag; the treatment indicator
+`tx_ap_no_ac` (1 = antiplatelet, no AC); the survival outcome `time_to_event` and
+event indicator `stroke_bleed_death2`; and the 21 baseline clustering covariates
+(`lv_injury`, `mrs_pta`, `age`, `sex`, `race`, `hispanic`, `insurance`, `hx_*`
+history flags, `lae_severe`, `pfo`, `lvef`, `wma`, `mri_dwi_multifocal`,
+`dwi_cortical`, `bnihss`).
+
+**Treatment coding:** `tx = 1` → anticoagulation; `tx = 0` → antiplatelet, no anticoagulation.
+
+---
+
+## Running the analysis
+
+1. Place `data.dta` in the repository root and the LVEF reference file under `data/`.
+2. Create an output folder for figures:
+   ```sh
+   mkdir -p figures
+   ```
+3. Run the script from the repository root:
+   ```sh
+   Rscript hte-cfs-code-public.R
+   ```
+   or open it in RStudio and run top to bottom. A fixed seed (`set.seed(427)`)
+   is used for reproducibility of clustering, t-SNE, and the forest.
+
+---
+
+## Outputs
+
+Figures and tables are written to the working directory (and `figures/`):
+
+**Tables (`.docx`)**
+- `t1_missing_comparison.docx` — included vs. excluded (complete-case) comparison
+- `Cluster_Characteristics_ISC.docx` — cluster characteristics
+- `Table_BLP_HTE_Analysis.docx` — best-linear-projection HTE tests
+- `t1-rr.docx` — cluster-based sample summary
+- `t1_pfo_ef_comparison.docx` — PFO / HFrEF subgroup comparison
+
+**Figures (`.pdf`)**
+- `fS1.pdf` — silhouette scores by *k*
+- `figures/f2.pdf` — consensus t-SNE of patient clusters
+- `figures/f4.pdf` — CATE / heterogeneity plots
+- `shap_values.pdf` — SHAP dependence plots
+- `2_…`–`6_cate_estims_ordered-*.pdf` — CATEs ordered by LV injury, baseline NIHSS, age, Fazekas, LVEF
+- `kaplan_meier_by_cluster_isc.pdf`, `kaplan_meier_by_cluster_and_tx_isc.pdf`,
+  `kaplan_meier_by_cluster_faceted_isc.pdf` — survival curves
+- `fS3.pdf` — composite-outcome component breakdown
+- `cluster_stab_jaccard.pdf` — bootstrap cluster-stability (Jaccard)
+
+---
+
+## Notes & caveats
+
+- This is **observational** data, so treatment effects are adjusted via estimated
+  propensity scores (IPW for the Cox model; `W.hat` learned internally by the
+  forest). For an RCT, set `W.hat = mean(W)` in `causal_survival_forest`.
+- The script is written as a sequential analysis pipeline rather than a package;
+  some output file paths (e.g. the LVEF reference `.dta`) are hard-coded and may
+  need to be adjusted for your environment.
+
+## Citation
+
+If you use this code, please cite the paper above.
+
+## License
+
+See [LICENSE](LICENSE).
