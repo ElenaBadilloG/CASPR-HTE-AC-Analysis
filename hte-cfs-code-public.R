@@ -1,3 +1,33 @@
+# =============================================================================
+# CASPR — Heterogeneous Anticoagulation Treatment Response in ESUS
+# Causal Survival Forest (CFS) analysis pipeline
+#
+# Paper: "Evaluation of Recurrent Stroke Risk and Anticoagulation Treatment
+#         Response among Phenotypically Similar Patients with ESUS:
+#         Evidence from the CASPR Registry"
+#
+# Pipeline (run top to bottom):
+#   1. Load data, define cohort (include == 1), treatment, and survival outcome
+#   2. Missingness table (included vs. complete-case-excluded)
+#   3. Min-max scaling of continuous covariates
+#   4. Correlation-weighted Gower distance + PAM clustering (k = 3)
+#   5. Consensus t-SNE viz + bootstrap (Jaccard) cluster-stability
+#   6. Propensity scores + IPW-weighted Cox model (tx x cluster interaction)
+#   7. Causal survival forest (grf): ATE + per-patient CATEs
+#   8. HTE interrogation: SHAP dependence, ordered CATE plots, best-linear-projection
+#   9. Kaplan-Meier curves by cluster and cluster x treatment
+#  10. Cluster / subgroup summary tables (back-transformed to original scale)
+#
+# Treatment coding: tx = 1 (anticoagulation), tx = 0 (antiplatelet, no AC)
+# Outcome: composite of recurrent ischemic stroke / major bleed / death
+#          (event = stroke_bleed_death2, time = time_to_event)
+# Method ref: Sverdrup & Wager (2024), causal survival forests.
+#
+# Inputs : data.dta (main), data/CASPR_lvef_092424_FINAL.dta (un-scaling ref)
+# Outputs: .docx tables + .pdf figures written to ./ and ./figures/
+# Repro  : set.seed(427); create ./figures before running.
+# =============================================================================
+
 
 
 library(haven)
@@ -43,8 +73,10 @@ theme_tuf2 <- ggthemes::theme_tufte() +
   )
 
 
+# --- Plot theme (Tufte-style) ---------------------------------------------
 
 
+# === 1. LOAD DATA, DEFINE COHORT, TREATMENT & OUTCOME =====================
 dfc <- read_dta("data.dta")
 
 dfc <- dplyr::filter(dfc, include==1)
@@ -109,7 +141,7 @@ variables <- unique(c(
   "time_to_event", "stroke_bleed_death2", "stroke_bleed_death2"
 ))
 
-####
+# === 2. MISSINGNESS: included vs. complete-case-excluded (Table S) ========
 # Pull raw values before scaling
 dfc_raw <- dfc %>%
   select(all_of(variables)) %>%
@@ -182,7 +214,7 @@ flextable::save_as_docx(as_flex_table(tbl_missing),
                         path = "t1_missing_comparison.docx")
 
 
-####
+# === 3. MIN-MAX SCALING of continuous covariates ==========================
 
 # rescale
 # Min-Max normalization function
@@ -208,6 +240,7 @@ dfc$mri_microhemorrhage_count <- ifelse(dfc$mri_microhemorrhage==0, 0, dfc$mri_m
 
 
 
+# --- Build variable groups by name pattern (demographics, MRI, hx, ...) ---
 demog_vars <-  c("age", "sex", "race", "hispanic", "insurance")
 mri_vars <- colnames(dfc)[unlist(lapply(colnames(dfc), function(x){str_detect(x, "mri_") &  ! str_detect(x, "72") &
     ! str_detect(x, "23") & ! str_detect(x, "_loc")}))]
@@ -314,6 +347,7 @@ variables <- unique(c(
 
 
 
+# --- Assemble final clustering covariate set + complete-case subset -------
 # CASPR Causal Survival Forest Analysis
 # Adapted from Sverdrup & Wager (2024) methodology
 
@@ -339,6 +373,7 @@ cluster_data <- cluster_data %>%
 
 
 
+# --- Distance helpers: Cramer's V + correlation-weighted Gower ------------
 # Fixed Cramer's V function with better missing value handling
 cramers_v <- function(x, y) {
   # Convert to factors if not already
@@ -629,7 +664,7 @@ wgower_dist <- calculate_weighted_gower_mixed(
   weight_method = "inverse_max"
 )
 
-#####
+# === 4. PAM CLUSTERING: choose k by silhouette (selected k = 3) ===========
 
 
 # Determine optimal k
@@ -689,6 +724,7 @@ dfs$cluster <- as.factor(dfs$cluster_pam)
 
 
 
+# === 5a. CONSENSUS t-SNE (100 runs, most-stable selected) =================
 # Visualize clusters using MDS
 library(Rtsne)
 mds <- cmdscale(wgower_dist)
@@ -846,6 +882,7 @@ variables <- unique(c(
 dff <- select(dfs, variables)
 
 
+# === 6. PROPENSITY SCORES, IPW & PS-WEIGHTED COX (tx x cluster) ===========
 # CASPR Causal Survival Forest Analysis
 # Adapted from Sverdrup & Wager (2024) methodology
 
@@ -953,6 +990,7 @@ print(summary(cox_interaction))
 
 
 
+# === 7. CAUSAL SURVIVAL FOREST (grf) ======================================
 # ============================================================================
 # FIT CAUSAL SURVIVAL FOREST
 # ============================================================================
@@ -971,7 +1009,7 @@ cs.forest <- causal_survival_forest(
   
   seed = 427
 )
-####### TREE DIAGNOSTICS
+# --- Forest diagnostics: leaf sizes & tree structure ----------------------
 # Check actual leaf sizes in individual trees
 check_tree_leaf_sizes <- function(forest, X, n_trees = 50) {
   all_leaf_sizes <- c()
@@ -1006,7 +1044,7 @@ check_tree_structure <- function(forest, X, n_trees = 50) {
 
 check_tree_structure(cs.forest, X)
 
-######
+# --- CATE estimates: ATE + per-patient effects with 95% CIs ---------------
 
 # Get treatment effect estimates
 tau_hat <- predict(cs.forest)$predictions
@@ -1067,7 +1105,7 @@ dff$cate_upper <- tau.upper
 
 
 
-######
+# --- Visualize CATEs (ordered, with error bars) ---------------------------
 # Visualizing CATE
 
 dff$idx <- as.numeric(rownames(dff))
@@ -1130,7 +1168,7 @@ dev.off()
 
 
 
-#########
+# === 8a. SHAP-style dependence of CATEs on covariates =====================
 
 
 library(fastshap)
@@ -1341,7 +1379,7 @@ plot_shap_dependence("age", "lvef")
 plot_shap_dependence("age", "lv_injury")
 
 
-##### Now inspect specific clinically interesting CATE-defining covs
+# === 8b. Ordered CATE plots by key covariates (LVinj, NIHSS, age, ...) ====
 # e.g. LVEF, LV
 
 
@@ -1599,7 +1637,7 @@ print(gcfAA)
 dev.off()
 
 
-##########
+# --- Cluster-characteristics summary table --------------------------------
 dff$mri_fazekas <- as.numeric(dff$mri_fazekas)
 a_colors <- c("#2941cc",   "#eab30f","purple", "red", "#3da510")
 
@@ -1797,7 +1835,7 @@ flextable::save_as_docx(ft_cluster_summary,
 
 
 
-########## KAPLAN-MEIER
+# === 9. KAPLAN-MEIER survival curves (by cluster, by cluster x tx) ========
 
 
 # Create survival object
@@ -1931,6 +1969,7 @@ dev.off()
 
 # Now test for HTE for clinically relevant variables:
 
+# === 8c. BEST LINEAR PROJECTION — formal HTE tests (Table) ================
 # ============================================================================
 # BEST LINEAR PROJECTION - Identify which covariates predict heterogeneity
 # ============================================================================
@@ -2018,7 +2057,7 @@ save_as_docx(ft_blp, path = "Table_BLP_HTE_Analysis.docx")
 
 
 
-#######################
+# === 10. SUBGROUP & BACK-TRANSFORMED SUMMARY TABLES =======================
 
 #1. Who are the people with positive effects?
 
@@ -2223,7 +2262,7 @@ cat("Major bleeding (ISTH):", sum(dff$isth_bleed, na.rm=TRUE),
 cat("All-cause mortality:", sum(dff$death, na.rm=TRUE),
     "(", round(100*mean(dff$death, na.rm=TRUE), 1), "%)\n")
 
-##### EXTRA VIZ:
+# --- Extra viz: composite-outcome components + cluster ATE overlay --------
 
 
 # Add cluster-level ATE from Cox model to the CATE plot
@@ -2249,7 +2288,7 @@ dev.off()
 
 
 
-#############
+# === 5b. BOOTSTRAP CLUSTER STABILITY (Jaccard, k = 2..6) ==================
 
 
 # Bootstrap resampling for cluster stability
